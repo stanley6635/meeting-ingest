@@ -6,88 +6,80 @@
 
 ## 中文
 
-把语音转文字的会议记录，自动纠正错误、对照知识库去重、提炼真正有价值的信息，写入 wiki。
+把语音转文字的会议记录，先做可追溯纠错，再对照 wiki 判断哪些内容值得长期入库，最后交给 wiki-builder 按知识库规范写回。
 
 ### 它解决什么问题
 
 语音转录的会议记录通常有三个痛点：
-1. **转写错误太多**——人名、产品名、术语被转得面目全非
-2. **90% 是已知信息**——会上说的东西，wiki 里早就记过了
-3. **执行细节混在战略判断里**——操作指引、截止日期、现场情绪充斥全文
 
-meeting-ingest 用一个 7 步管线解决这三个问题：
+1. 人名、产品名、医院名、组织名、术语和缩写容易被 ASR 错写。
+2. 同一场会议里常混有已知信息、新信号、执行细节和临时讨论。
+3. 如果错误转录直接进入 wiki，会污染后续 RO 文档、判断和检索结果。
+
+meeting-ingest 的边界很清楚：它负责会议转录的纠错、wiki 对照和写回前准备；结构化写回交给 wiki-builder。
 
 ```mermaid
 flowchart LR
-    A["📝 转录文件"] --> B["Step 0\n归档"]
-    B --> C["Step 1\n纠错 pass"]
-    C --> D["Step 2\n搜索 wiki"]
-    D --> E["Step 3\n读完整页面"]
-    E --> F["Step 4\n三道筛子过滤"]
-    F --> G["Step 5\n报摘要"]
-    G --> H["Step 6\n写回 wiki"]
-    H --> I["Step 7\nLint 检查"]
-    
-    style A fill:#1F497D,color:#fff
-    style I fill:#4BACC6,color:#fff
+    A["会议转录"] --> B["Step 0<br/>归档"]
+    B --> C["Step 1<br/>纠错 pass"]
+    C --> D["确认阀门<br/>Stanley 确认"]
+    D --> E["Step 2<br/>搜索 wiki"]
+    E --> F["Step 3<br/>读完整页面"]
+    F --> G["Step 4<br/>交给 wiki-builder"]
 ```
 
 ### 核心能力
 
-- **强制纠错**：逐字对照 wiki 中已记录的人名、产品名、术语，把转写错误揪出来
-- **全文对比**：搜索 wiki 后必须读完匹配页面的**完整内容**，不能只看搜索片段就判"已知"
-- **三道筛子**：
-  1. 已知 vs 新 —— wiki 已有的，剔除
-  2. 一周测试 —— 一周后还重要吗？
-  3. 持久层 vs 执行层 —— 一次 60 分钟会议，真正入库的通常 ≤3 个要点
+- 说话人实名化：按参会人、点名顺序、会议结构和 wiki people/ 逐段确认，不把 ASR 发言人编号当成稳定身份。
+- 内容纠错：对人名、产品名、组织名、医院名、术语、缩写、日期、金额、数量等高风险字段做证据化校正。
+- 确认阀门：改写转录文件前必须先展示纠错表，只有 Stanley 确认“改”的项目才写回。
+- TARS 例外：raw/meetings/ 中由 ASR 生成的会议纪要/逐字稿可以被纠错改写；此例外不扩展到 raw/ 下其他原始来源。
+- wiki 对照：搜索并完整阅读相关 wiki 页面，避免只凭 snippet 判断“已知”。
 
 ### 快速开始
+
+将 skill 放入你的 agent skill 目录，例如：
 
 ```bash
 git clone https://github.com/stanley6635/meeting-ingest.git ~/.claude/skills/meeting-ingest
 ```
 
-然后编辑 `skill.md` 里的**配置**部分，设置你的知识库路径。详见 [SETUP.md](SETUP.md)。
+然后按 [SETUP.md](SETUP.md) 配置 `$MEETINGS_DIR`、`$WIKI_DIR` 和 `$INDEX_FILE`。
 
 ### 依赖
 
-- Python 3（stdlib only，无需 pip install）
-- 结构化 wiki 知识库（包含 `people/`、`products/`、`mechanisms/` 等子目录）
-- `file-ingest` skill（可选，用于自动归档）
+- 结构化 wiki 知识库
+- `file-ingest` skill：用于归档会议转录
+- `pro-workflow:wiki-builder`：用于最终 wiki 写回
+- agentmemory `memory_smart_search`：用于 wiki 搜索和实体对照
 
 ---
 
 ## English
 
-A Claude Code / OpenCode skill that processes voice-to-text meeting transcripts into structured wiki knowledge.
+A Claude Code / OpenCode skill for processing voice-to-text meeting transcripts. It performs evidence-based ASR correction, cross-references the wiki, then hands structured write-back to wiki-builder.
 
 ### Pipeline
 
 ```mermaid
 flowchart LR
-    A["📝 Transcript"] --> B["Step 0\nArchive"]
-    B --> C["Step 1\nError Fix"]
-    C --> D["Step 2\nWiki Search"]
-    D --> E["Step 3\nRead Full Pages"]
-    E --> F["Step 4\nThree Filters"]
-    F --> G["Step 5\nSummarize"]
-    G --> H["Step 6\nWrite-back"]
-    H --> I["Step 7\nLint"]
-    
-    style A fill:#1F497D,color:#fff
-    style I fill:#4BACC6,color:#fff
+    A["Meeting transcript"] --> B["Step 0<br/>Archive"]
+    B --> C["Step 1<br/>Correction pass"]
+    C --> D["Confirmation gate<br/>Stanley approves"]
+    D --> E["Step 2<br/>Search wiki"]
+    E --> F["Step 3<br/>Read full pages"]
+    F --> G["Step 4<br/>Handoff to wiki-builder"]
 ```
 
 ### Key Features
 
-| Step | What | Why |
-|------|------|-----|
-| 1. Error Correction | Fix ASR mangling of names, products, terms | Garbage in → garbage out |
-| 2. Wiki Search | Cross-reference every topic domain | Don't re-record what you already know |
-| 3. Full Page Read | Read matched pages completely | Snippet match ≠ already covered |
-| 4. Three Filters | Known/new, one-week test, durable vs execution | 90% of meeting content doesn't belong in long-term memory |
-| 5-6. Write-back | Structured updates with time layers | Preserve history, don't flatten |
-| 7. Lint | Verify source paths and cross-links | No fabricated references |
+| Feature | What it does |
+|---------|--------------|
+| Speaker mapping | Resolves unstable ASR speaker labels to real participants when evidence supports it |
+| Content correction | Checks names, products, organizations, hospitals, terms, abbreviations, dates, amounts, and quantities |
+| Confirmation gate | Shows a correction table first; only confirmed corrections are written back |
+| TARS raw exception | Allows correction of ASR-generated files in raw/meetings/ only |
+| Wiki cross-reference | Searches and reads full wiki pages before deciding what is already known |
 
 ### Quick Start
 
@@ -95,13 +87,14 @@ flowchart LR
 git clone https://github.com/stanley6635/meeting-ingest.git ~/.claude/skills/meeting-ingest
 ```
 
-Edit the **配置** section in `skill.md` to match your knowledge base paths. See [SETUP.md](SETUP.md) for details.
+Configure `$MEETINGS_DIR`, `$WIKI_DIR`, and `$INDEX_FILE` in `skill.md`. See [SETUP.md](SETUP.md).
 
 ### Requirements
 
-- Python 3 (stdlib only)
 - Structured wiki knowledge base
-- `file-ingest` skill (optional)
+- `file-ingest` skill
+- `pro-workflow:wiki-builder`
+- agentmemory `memory_smart_search`
 
 ### License
 

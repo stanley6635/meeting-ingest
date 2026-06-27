@@ -2,88 +2,76 @@
 
 ## 1. Install the Skill
 
-Clone into your skills directory:
+Clone or copy this skill into the directory your agent loads skills from.
 
-**Claude Code:**
+Claude Code example:
+
 ```bash
-git clone https://github.com/YOUR_USERNAME/meeting-ingest.git ~/.claude/skills/meeting-ingest
+git clone https://github.com/stanley6635/meeting-ingest.git ~/.claude/skills/meeting-ingest
 ```
 
-**OpenCode / other platforms:** place the `skill.md` wherever your platform loads skills from.
+A separate code repository is not required at runtime. Keeping one canonical repo is useful for versioning and syncing the installed skill, but the agent only needs the installed skill files.
 
-## 2. Wiki Knowledge Base Setup
+## 2. Knowledge Base Layout
 
-This skill assumes you have a structured wiki knowledge base. The expected structure:
+The skill assumes a structured TARS-style knowledge base:
 
-```
+```text
 your-kb/
-  wiki/
-    people/       # person pages with frontmatter
-    products/     # product pages
-    mechanisms/   # market/operational mechanisms
-    projects/     # active workstreams
-    judgments/    # structured analysis
   raw/
-    meetings/     # where transcripts go (default: $MEETINGS_DIR)
-  scripts/
-    wiki_search.py   # BM25 search over wiki pages
-    wiki_lint.py     # structure health checker
-  index.md        # top-level navigation
-  log.md          # append-only operation log
+    meetings/     # ASR-generated meeting transcripts
+  wiki/
+    people/
+    products/
+    mechanisms/
+    events/
+    projects/
+    judgments/
+  index.md
+  AGENTS.md
+  CONVENTIONS.md
 ```
 
-The two scripts (`wiki_search.py`, `wiki_lint.py`) are included in this repo under `scripts/`. Copy them to your knowledge base's scripts directory:
+In TARS, `raw/` is normally immutable. The explicit exception is `raw/meetings/`: ASR-generated meeting minutes or transcripts may be corrected after Stanley confirms the correction table. This exception exists because uncorrected ASR errors can pollute downstream wiki pages and RO documents.
 
-```bash
-cp scripts/wiki_search.py scripts/wiki_lint.py /path/to/your-kb/scripts/
-```
-
-Both are Python 3 stdlib-only — no dependencies.
+The exception does not apply to images, PDFs, web clippings, emails, product files, or other raw sources.
 
 ## 3. Configure Paths
 
-Edit `skill.md`, find the **配置** section, and update the variables:
+Edit `skill.md`, find the configuration section, and set:
 
 | Variable | What to set |
 |----------|-------------|
 | `$MEETINGS_DIR` | Where meeting transcript files live, e.g. `raw/meetings/` |
 | `$WIKI_DIR` | Wiki pages root, e.g. `wiki/` |
-| `$WIKI_SEARCH` | Path to search script, e.g. `scripts/wiki_search.py` |
-| `$WIKI_LINT` | Path to lint script, e.g. `scripts/wiki_lint.py` |
 | `$INDEX_FILE` | Wiki index, e.g. `index.md` |
-| `$LOG_FILE` | Operation log, e.g. `log.md` |
 
-Paths can be absolute or relative to your workspace root.
+Wiki search is handled through agentmemory `memory_smart_search`; final write-back is delegated to `pro-workflow:wiki-builder`.
 
-## 4. (Optional) Install file-ingest
+## 4. Required Related Skills
 
-The skill delegates file archiving to `file-ingest`. If you don't have it, the skill falls back to manual placement — just move your transcript files into `$MEETINGS_DIR` with the naming format `YYYY-MM-DD_description.ext`.
+- `file-ingest`: archives incoming transcript files into `$MEETINGS_DIR`.
+- `pro-workflow:wiki-builder`: performs the final structured wiki write-back.
+- agentmemory `memory_smart_search`: searches known people, products, mechanisms, projects, and prior notes.
 
 ## 5. Test
 
-Drop a meeting transcript .txt into `$MEETINGS_DIR` and say:
+Place a meeting transcript `.txt` or `.md` file into `$MEETINGS_DIR`, then ask the agent:
 
 > 处理一下这个会议记录
 
-The skill will run through error correction → wiki search → net new identification → wait for your confirmation before writing anything.
+Expected behavior:
 
-## Wiki Page Frontmatter Convention
-
-For the skill's search and write-back to work correctly, wiki pages should use this frontmatter:
-
-```yaml
----
-title: Page Title
-type: person | product | mechanism | project | event | judgment
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-sources:
-  - raw/path/to/source.ext
----
-```
+1. The agent identifies the file as a spoken meeting transcript.
+2. It extracts high-risk fields such as speakers, people, products, organizations, hospitals, terms, dates, prices, quantities, and project names.
+3. It searches the wiki and other allowed evidence sources.
+4. It shows a correction table before modifying the transcript.
+5. Only corrections confirmed as “改” are written back to the transcript file.
+6. It then searches and reads relevant wiki pages before handing the corrected transcript to wiki-builder.
 
 ## Troubleshooting
 
-- **Search returns nothing**: check that `$WIKI_SEARCH` points to a working copy of `wiki_search.py`, and that your wiki pages are in `$WIKI_DIR`
-- **Lint fails**: make sure `$WIKI_LINT` is correctly configured and your wiki pages have proper `sources` fields
-- **Correction table has too many "unknown" entries**: this is normal for a new wiki — the skill learns as your knowledge base grows
+- If too many items are marked unconfirmed, the available evidence is not strong enough; keep them unchanged or confirm them manually.
+- If speaker mapping looks unstable, remember ASR speaker numbers are not reliable identities across the whole transcript.
+- If the agent tries to correct image OCR under this skill, route the task away from meeting-ingest; this skill is only for spoken meeting transcripts.
+- If the installed skill behaves differently from the repo copy, sync `skill.md`, `README.md`, and `SETUP.md` between the canonical repo and the installed skill directory.
